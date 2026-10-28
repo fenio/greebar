@@ -35,7 +35,7 @@ cask "greebar" do
   desc "Menu bar controller for Gree air conditioners"
   homepage "https://github.com/fenio/greebar"
 
-  depends_on macos: ">= :sonoma"
+  depends_on macos: :sonoma
 
   app "GreeBar.app"
 
