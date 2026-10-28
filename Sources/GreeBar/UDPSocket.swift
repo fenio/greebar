@@ -52,25 +52,28 @@ final class UDPSocket {
         return (Data(buffer[0..<count]), String(cString: ip))
     }
 
-    /// Broadcast addresses of all active IPv4 interfaces, plus the limited broadcast address.
-    static func broadcastAddresses() -> [String] {
-        var result = ["255.255.255.255"]
+    /// Address and netmask (host byte order) of each active non-loopback IPv4 interface.
+    static func localSubnets() -> [(address: UInt32, mask: UInt32)] {
+        var result: [(address: UInt32, mask: UInt32)] = []
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return result }
         defer { freeifaddrs(ifaddr) }
         for ptr in sequence(first: first, next: { $0.pointee.ifa_next }) {
             let flags = Int32(ptr.pointee.ifa_flags)
-            guard flags & IFF_UP != 0, flags & IFF_BROADCAST != 0, flags & IFF_LOOPBACK == 0,
-                  let dst = ptr.pointee.ifa_dstaddr, dst.pointee.sa_family == sa_family_t(AF_INET)
+            guard flags & IFF_UP != 0, flags & IFF_LOOPBACK == 0,
+                  let addr = ptr.pointee.ifa_addr, addr.pointee.sa_family == sa_family_t(AF_INET),
+                  let mask = ptr.pointee.ifa_netmask
             else { continue }
-            var ip = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
-            dst.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
-                var a = $0.pointee.sin_addr
-                inet_ntop(AF_INET, &a, &ip, socklen_t(INET_ADDRSTRLEN))
-            }
-            let s = String(cString: ip)
-            if !result.contains(s) { result.append(s) }
+            result.append((ipv4(addr), ipv4(mask)))
         }
         return result
+    }
+
+    private static func ipv4(_ sa: UnsafeMutablePointer<sockaddr>) -> UInt32 {
+        sa.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { UInt32(bigEndian: $0.pointee.sin_addr.s_addr) }
+    }
+
+    static func string(_ ip: UInt32) -> String {
+        "\(ip >> 24).\(ip >> 16 & 0xff).\(ip >> 8 & 0xff).\(ip & 0xff)"
     }
 }

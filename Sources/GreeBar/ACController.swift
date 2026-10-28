@@ -44,15 +44,41 @@ final class ACController: ObservableObject {
         isBusy = true
         defer { isBusy = false }
         do {
-            let bound = try await Task.detached { try GreeClient.bind(candidate) }.value
-            device = bound
-            UserDefaults.standard.set(try JSONEncoder().encode(bound), forKey: Self.deviceDefaultsKey)
+            store(try await Task.detached { try GreeClient.bind(candidate) }.value)
             lastError = nil
         } catch {
             lastError = error.localizedDescription
             return
         }
         await refresh()
+    }
+
+    private func store(_ device: GreeDevice) {
+        self.device = device
+        UserDefaults.standard.set(try? JSONEncoder().encode(device), forKey: Self.deviceDefaultsKey)
+    }
+
+    /// The router may have given the unit a new IP; find it again by MAC. Returns true if it moved.
+    private func relocate() async -> Bool {
+        guard var moved = device else { return false }
+        let mac = moved.mac
+        guard let found = try? await Task.detached(operation: { try GreeClient.discover() }).value
+            .first(where: { $0.mac == mac }), found.ip != moved.ip
+        else { return false }
+        moved.ip = found.ip
+        store(moved)
+        return true
+    }
+
+    /// Runs `operation` off the main thread; if the unit moved to a new IP, retries once at the new one.
+    private func perform<T: Sendable>(_ operation: @escaping @Sendable (GreeDevice) throws -> T) async throws -> T {
+        guard let device else { throw GreeError.bindFailed }
+        do {
+            return try await Task.detached { try operation(device) }.value
+        } catch {
+            guard await relocate(), let moved = self.device else { throw error }
+            return try await Task.detached { try operation(moved) }.value
+        }
     }
 
     func forgetDevice() {
@@ -65,14 +91,11 @@ final class ACController: ObservableObject {
     // MARK: Status & control
 
     func refresh() async {
-        guard let device, !isBusy else { return }
+        guard device != nil, !isBusy else { return }
         isBusy = true
         defer { isBusy = false }
         do {
-            let values = try await Task.detached {
-                try GreeClient.status(device, columns: ACState.columns)
-            }.value
-            state.raw = values
+            state.raw = try await perform { try GreeClient.status($0, columns: ACState.columns) }
             lastError = nil
         } catch {
             lastError = error.localizedDescription
@@ -81,10 +104,10 @@ final class ACController: ObservableObject {
 
     /// Applies the change locally right away, then sends it to the unit.
     func send(_ params: [String: Int]) async {
-        guard let device else { return }
+        guard device != nil else { return }
         state.raw.merge(params) { $1 }
         do {
-            try await Task.detached { try GreeClient.set(device, params) }.value
+            try await perform { try GreeClient.set($0, params) }
             lastError = nil
         } catch {
             lastError = error.localizedDescription

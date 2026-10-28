@@ -10,8 +10,10 @@ enum GreeError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .socket(let code) where code == EHOSTUNREACH || code == EPERM:
+        case .socket(let code) where code == EPERM:
             "Network blocked. Allow GreeBar in System Settings › Privacy & Security › Local Network."
+        case .socket(let code) where code == EHOSTUNREACH || code == EHOSTDOWN:
+            "Can't reach the air conditioner. Is it powered and on Wi-Fi? If this persists, check Local Network access."
         case .socket(let code): "Network error: \(String(cString: strerror(code)))"
         case .badAddress(let host): "Invalid IP address: \(host)"
         case .timeout: "The air conditioner did not respond"
@@ -42,7 +44,17 @@ enum GreeClient {
     static func discover(host: String? = nil, timeout: TimeInterval = 3) throws -> [GreeDevice] {
         let socket = try UDPSocket()
         let scan = Data(#"{"t":"scan"}"#.utf8)
-        let targets = host.map { [$0] } ?? UDPSocket.broadcastAddresses()
+        var targets = host.map { [$0] } ?? ["255.255.255.255"]
+        if host == nil {
+            for (address, mask) in UDPSocket.localSubnets() {
+                let network = address & mask, size = ~mask
+                targets.append(UDPSocket.string(network | size))
+                // Units often ignore broadcasts, so also ask every host on small subnets directly.
+                if size >= 2 && size <= 1024 {
+                    targets += (1..<size).map { UDPSocket.string(network | $0) }
+                }
+            }
+        }
         var sendError: Error?
         var sentAny = false
         for target in targets {
