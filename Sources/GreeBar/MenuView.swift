@@ -31,13 +31,34 @@ struct MenuView: View {
 private struct ControlView: View {
     @EnvironmentObject private var ac: ACController
     let device: GreeDevice
+    @State private var name = ""
+    @State private var isRenaming = false
+    @FocusState private var nameFocused: Bool
 
     var body: some View {
         let state = ac.state
 
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(device.name).font(.headline)
+                // A plain Text until clicked, so the popover doesn't open with a caret in the name.
+                if isRenaming {
+                    TextField("Name", text: $name)
+                        .textFieldStyle(.plain)
+                        .font(.headline)
+                        .focused($nameFocused)
+                        .onAppear { nameFocused = true }
+                        .onSubmit { isRenaming = false }
+                        .onChange(of: nameFocused) { if !nameFocused { isRenaming = false } }
+                        .onChange(of: name) { ac.rename(name) }
+                } else {
+                    Text(device.name)
+                        .font(.headline)
+                        .help("Click to rename")
+                        .onTapGesture {
+                            name = device.name
+                            isRenaming = true
+                        }
+                }
                 if let room = state.roomTemperature {
                     Text("Room \(room)°C").font(.caption).foregroundStyle(.secondary)
                 }

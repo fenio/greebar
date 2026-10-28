@@ -81,6 +81,13 @@ final class ACController: ObservableObject {
         }
     }
 
+    func rename(_ name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard var renamed = device, !trimmed.isEmpty else { return }
+        renamed.name = trimmed
+        store(renamed)
+    }
+
     func forgetDevice() {
         device = nil
         state = ACState()
